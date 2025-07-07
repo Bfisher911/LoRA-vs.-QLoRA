@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoRA vs. QLoRA: Memory vs. Accuracy Showdown</title>
+    
+    <!-- Tailwind CSS for rapid UI development -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+
+    <!-- Custom Google Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* --- Custom Properties for Easy Theming --- */
+        /* Instructors can easily change the color palette here */
+        :root {
+            --color-primary: #4f46e5; /* Indigo */
+            --color-secondary: #10b981; /* Emerald */
+            --color-accent: #f59e0b; /* Amber */
+            --color-base: #1f2937; /* Gray 800 */
+            --color-light: #f9fafb; /* Gray 50 */
+            --color-border: #e5e7eb; /* Gray 200 */
+        }
+
+        /* --- Base Styling --- */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--color-light);
+            color: var(--color-base);
+        }
+
+        /* --- Tooltip Styling --- */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            border-bottom: 2px dotted var(--color-accent);
+            cursor: help;
+        }
+
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            width: 250px;
+            background-color: var(--color-base);
+            color: var(--color-light);
+            text-align: center;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 10;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -125px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 0.875rem;
+            line-height: 1.4;
+        }
+
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+        /* --- Modal (Pop-up) Styling --- */
+        .modal {
+            position: fixed;
+            z-index: 50;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0s 0.3s;
+        }
+
+        .modal.show {
+            opacity: 1;
+            visibility: visible;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-content {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            width: 90%;
+            max-width: 600px;
+            transform: scale(0.95);
+            transition: transform 0.3s ease;
+        }
+        
+        .modal.show .modal-content {
+            transform: scale(1);
+        }
+
+        /* --- Custom Slider Thumb --- */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: var(--color-primary);
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 0 2px var(--color-primary);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: var(--color-primary);
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 0 2px var(--color-primary);
+        }
+        
+        /* --- Chart Animation --- */
+        .chart-container {
+            transition: background-color 0.3s ease;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <!-- Header -->
+        <header class="text-center mb-10">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">LoRA vs. QLoRA</h1>
+            <p class="text-lg text-gray-600 mt-2">The Memory vs. Accuracy Showdown</p>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <!-- Left Column: Controls -->
+            <div class="space-y-8">
+                <!-- Model Size & VRAM -->
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-bold mb-4">1. VRAM Consumption</h2>
+                    <label for="modelSize" class="block mb-2 font-medium text-gray-700">Model Size: <span id="modelSizeLabel" class="font-bold text-indigo-600">7 B</span> Parameters</label>
+                    <input type="range" id="modelSize" min="3" max="70" value="7" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" aria-label="Model Size Slider">
+                    
+                    <div class="mt-6">
+                        <canvas id="vramChart"></canvas>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-4">Estimates based on a typical <span class="tooltip">rank<span class="tooltip-text">The 'rank' in LoRA determines the complexity and size of the trainable matrices. A lower rank means fewer trainable parameters, less memory, but potentially lower task performance.</span></span> of 8 and a batch size of 1.</p>
+                </div>
+
+                <!-- Accuracy Simulator -->
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold">2. Accuracy Simulator</h2>
+                        <div class="flex space-x-2">
+                            <button id="showMathBtn" class="text-sm bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg transition" aria-label="Show LoRA Math Formula">Show Math</button>
+                            <button id="showQuantBtn" class="text-sm bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg transition" aria-label="Show Quantization Diagram">Show Quantization</button>
+                        </div>
+                    </div>
+                    <label for="dataset" class="block mb-2 font-medium text-gray-700">Select Evaluation Dataset:</label>
+                    <select id="dataset" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" aria-label="Select Dataset for Accuracy Simulation">
+                        <option value="alpaca">Stanford Alpaca</option>
+                        <option value="dolly">Databricks Dolly 15k</option>
+                        <option value="gsm8k">GSM8K (Grade School Math)</option>
+                    </select>
+                    <div class="mt-6">
+                         <canvas id="accuracyChart"></canvas>
+                    </div>
+                     <p class="text-xs text-gray-500 mt-4">Scores are illustrative. QLoRA uses <span class="tooltip">NF4<span class="tooltip-text">NormalFloat 4 (NF4) is a special 4-bit data type that is information-theoretically optimal for normally distributed weights, allowing for more accurate quantization.</span></span> and <span class="tooltip">double-quant<span class="tooltip-text">Double Quantization is a process where the quantization constants are themselves quantized, saving an additional ~0.5 bits per parameter on average.</span></span>.</p>
+                </div>
+            </div>
+
+            <!-- Right Column: Charts & Estimator -->
+            <div class="space-y-8">
+                <!-- Cost Estimator -->
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-bold mb-4">3. Training Cost Estimator</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="epochs" class="block text-sm font-medium text-gray-700">Training Epochs</label>
+                            <input type="number" id="epochs" value="3" min="1" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" aria-label="Training Epochs Input">
+                        </div>
+                        <div>
+                            <label for="gpuCost" class="block text-sm font-medium text-gray-700">Cloud GPU Cost ($/hr)</label>
+                            <input type="number" id="gpuCost" value="1.50" step="0.01" min="0" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" aria-label="GPU Cost per Hour Input">
+                        </div>
+                    </div>
+                    <div class="mt-6 space-y-4">
+                        <div class="flex justify-between items-center bg-indigo-50 p-4 rounded-lg">
+                            <span class="font-semibold text-indigo-800">LoRA Estimated Cost:</span>
+                            <span id="loraCost" class="text-2xl font-bold text-indigo-900">$0.00</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-emerald-50 p-4 rounded-lg">
+                            <span class="font-semibold text-emerald-800">QLoRA Estimated Cost:</span>
+                            <span id="qloraCost" class="text-2xl font-bold text-emerald-900">$0.00</span>
+                        </div>
+                    </div>
+                     <p class="text-xs text-gray-500 mt-4">Based on a 10k sample dataset. Assumes QLoRA is ~30% faster per epoch due to smaller memory footprint and faster I/O.</p>
+                </div>
+                
+                <!-- Summary -->
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-bold mb-4">Showdown Summary</h2>
+                    <ul class="space-y-3">
+                        <li class="flex items-start">
+                            <span class="text-emerald-500 mr-3 mt-1">&#10004;</span>
+                            <div><strong class="text-emerald-700">QLoRA</strong>: Drastically reduces memory, making it possible to fine-tune huge models on a single consumer GPU. The go-to for memory-constrained scenarios.</div>
+                        </li>
+                        <li class="flex items-start">
+                             <span class="text-indigo-500 mr-3 mt-1">&#10004;</span>
+                            <div><strong class="text-indigo-700">LoRA</strong>: Still highly effective and often slightly more accurate or faster to train if memory is not a bottleneck. A solid baseline.</div>
+                        </li>
+                         <li class="flex items-start">
+                            <span class="text-amber-500 mr-3 mt-1">&#9888;</span>
+                            <div><strong>The Trade-off</strong>: QLoRA trades a tiny amount of theoretical accuracy for massive memory savings. In practice, this difference is often negligible.</div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Math Modal -->
+    <div id="mathModal" class="modal" aria-modal="true" role="dialog">
+        <div class="modal-content relative">
+            <button id="closeMathModal" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl" aria-label="Close Math Formula Modal">&times;</button>
+            <h3 class="text-2xl font-bold mb-4">The LoRA Formula</h3>
+            <p class="text-gray-600 mb-6">LoRA freezes the original model weights (W) and injects trainable "update matrices" (A and B) into each layer. Only A and B are trained, representing the change in weights (ΔW).</p>
+            <div class="bg-gray-100 p-6 rounded-lg text-center">
+                <p class="text-2xl font-mono text-gray-800 tracking-wider">ΔW = A · Bᵀ</p>
+            </div>
+            <div class="mt-6 text-sm text-gray-600">
+                <p><strong class="text-gray-800">W:</strong> Pre-trained Weight Matrix (frozen)</p>
+                <p><strong class="text-gray-800">A, B:</strong> Low-Rank Decomposition Matrices (trainable)</p>
+                <p><strong class="text-gray-800">Bᵀ:</strong> Transpose of matrix B</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quantization Modal -->
+    <div id="quantModal" class="modal" aria-modal="true" role="dialog">
+        <div class="modal-content relative">
+            <button id="closeQuantModal" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl" aria-label="Close Quantization Modal">&times;</button>
+            <h3 class="text-2xl font-bold mb-4">4-bit NormalFloat (NF4) Quantization</h3>
+            <p class="text-gray-600 mb-6">QLoRA quantizes the frozen base model to 4-bit. NF4 is a data type designed to handle the normal distribution of weights in a neural network with minimal loss of information.</p>
+            <!-- Simplified SVG Diagram for NF4 -->
+            <div class="bg-gray-100 p-4 rounded-lg">
+                <svg viewBox="0 0 300 100" class="w-full">
+                  <defs>
+                    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                    </marker>
+                  </defs>
+                  
+                  <!-- 32-bit float -->
+                  <rect x="10" y="30" width="80" height="40" fill="#dbeafe" stroke="#60a5fa" rx="5"></rect>
+                  <text x="50" y="55" font-size="10" text-anchor="middle" fill="#1e3a8a">32-bit Float</text>
+                  <text x="50" y="25" font-size="10" text-anchor="middle" font-weight="bold">Original Weight</text>
+                  
+                  <!-- Arrow -->
+                  <line x1="95" y1="50" x2="135" y2="50" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"></line>
+                  <text x="115" y="40" font-size="9" text-anchor="middle">Quantize</text>
+
+                  <!-- 4-bit NF4 -->
+                  <rect x="140" y="30" width="80" height="40" fill="#dcfce7" stroke="#34d399" rx="5"></rect>
+                  <text x="180" y="55" font-size="10" text-anchor="middle" fill="#065f46">4-bit NF4</text>
+                  <text x="180" y="25" font-size="10" text-anchor="middle" font-weight="bold">Quantized Weight</text>
+
+                   <!-- Arrow -->
+                  <line x1="225" y1="50" x2="265" y2="50" stroke="#6b7280" stroke-width="2" marker-end="url(#arrow)"></line>
+                  <text x="245" y="40" font-size="9" text-anchor="middle">Dequantize</text>
+                  
+                   <!-- 32-bit float -->
+                  <rect x="270" y="30" width="20" height="40" fill="#dbeafe" stroke="#60a5fa" rx="5" stroke-dasharray="2"></rect>
+                  <text x="280" y="55" font-size="10" text-anchor="middle" fill="#1e3a8a">~32-bit</text>
+                  <text x="280" y="80" font-size="9" text-anchor="middle">For computation</text>
+                </svg>
+            </div>
+             <p class="text-sm text-gray-500 mt-4">During the forward pass, the 4-bit weights are de-quantized back to the computation precision (e.g., 16-bit) to perform matrix multiplication.</p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            
+            // --- CONFIGURATION & MOCK DATA ---
+            // Instructors can tweak these default values
+            const VRAM_CONFIG = {
+                // Base VRAM in GB to load the model (approximate)
+                base_vram_multiplier: 0.9, 
+                // VRAM per parameter for Adam optimizer state (BF16)
+                optimizer_per_param_bytes: 8,
+                // VRAM per parameter for LoRA weights (BF16)
+                lora_per_param_bytes: 2, // Rank 8, alpha 16 approx
+                // QLoRA is much smaller as it only stores LoRA weights
+                qlora_per_param_bytes: 0.5,
+            };
+
+            const COST_CONFIG = {
+                // Time in hours to train 10k samples for 1 epoch with LoRA
+                base_hours_per_epoch: 1.2,
+                // QLoRA speedup factor
+                qlora_speedup_factor: 1.3,
+            };
+
+            const ACCURACY_DATA = {
+                // Mock accuracy scores [Base Model, LoRA, QLoRA]
+                alpaca: {
+                    labels: ['Follows Instructions', 'Creativity', 'Safety'],
+                    scores: [
+                        [65, 88, 87], // Base, LoRA, QLoRA for 'Follows Instructions'
+                        [50, 75, 74], // for 'Creativity'
+                        [70, 92, 91]  // for 'Safety'
+                    ]
+                },
+                dolly: {
+                    labels: ['Open Q&A', 'Summarization', 'Brainstorming'],
+                    scores: [
+                        [60, 85, 84],
+                        [72, 93, 92],
+                        [55, 80, 79]
+                    ]
+                },
+                gsm8k: {
+                    labels: ['Step-by-Step Reasoning', 'Final Answer Accuracy'],
+                    scores: [
+                        [15, 65, 63],
+                        [18, 70, 68]
+                    ]
+                }
+            };
+
+            // --- CHART INSTANCES ---
+            let vramChart, accuracyChart;
+
+            // --- UI ELEMENT REFERENCES ---
+            const modelSizeSlider = document.getElementById('modelSize');
+            const modelSizeLabel = document.getElementById('modelSizeLabel');
+            const datasetSelect = document.getElementById('dataset');
+            const epochsInput = document.getElementById('epochs');
+            const gpuCostInput = document.getElementById('gpuCost');
+            const loraCostEl = document.getElementById('loraCost');
+            const qloraCostEl = document.getElementById('qloraCost');
+            
+            // Modals
+            const mathModal = document.getElementById('mathModal');
+            const quantModal = document.getElementById('quantModal');
+            const showMathBtn = document.getElementById('showMathBtn');
+            const showQuantBtn = document.getElementById('showQuantBtn');
+            const closeMathModal = document.getElementById('closeMathModal');
+            const closeQuantModal = document.getElementById('closeQuantModal');
+
+
+            // --- VRAM CALCULATION & CHART ---
+            function calculateVram(paramsB) {
+                const params = paramsB * 1e9; // Convert billions to actual number
+                
+                // VRAM to load base model weights in BF16
+                const baseModelVram = (params * 2) / (1024 ** 3); // in GB
+                
+                // LoRA VRAM calculation
+                const loraAdapterVram = (params * VRAM_CONFIG.lora_per_param_bytes) / (1024 ** 3);
+                const loraOptimizerVram = (params * VRAM_CONFIG.optimizer_per_param_bytes * 0.01) / (1024 ** 3); // only ~1% of params are in LoRA
+                const loraTotalVram = baseModelVram + loraAdapterVram + loraOptimizerVram;
+
+                // QLoRA VRAM calculation
+                const qloraBaseModelVram = (params * 0.5) / (1024 ** 3); // 4-bit = 0.5 bytes
+                const qloraAdapterVram = (params * VRAM_CONFIG.qlora_per_param_bytes) / (1024 ** 3);
+                const qloraOptimizerVram = (params * VRAM_CONFIG.optimizer_per_param_bytes * 0.01) / (1024 ** 3); // Same as LoRA
+                const qloraTotalVram = qloraBaseModelVram + qloraAdapterVram + qloraOptimizerVram;
+
+                return { lora: loraTotalVram, qlora: qloraTotalVram };
+            }
+
+            function updateVramChart() {
+                const modelSize = parseInt(modelSizeSlider.value);
+                modelSizeLabel.textContent = `${modelSize} B`;
+                
+                const vram = calculateVram(modelSize);
+                
+                vramChart.data.datasets[0].data = [vram.lora.toFixed(2)];
+                vramChart.data.datasets[1].data = [vram.qlora.toFixed(2)];
+                vramChart.update();
+            }
+
+            function initVramChart() {
+                const ctx = document.getElementById('vramChart').getContext('2d');
+                const initialVram = calculateVram(parseInt(modelSizeSlider.value));
+
+                vramChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['VRAM Required (GB)'],
+                        datasets: [
+                            {
+                                label: 'LoRA',
+                                data: [initialVram.lora.toFixed(2)],
+                                backgroundColor: 'rgba(79, 70, 229, 0.7)', // Indigo
+                                borderColor: 'rgba(79, 70, 229, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'QLoRA',
+                                data: [initialVram.qlora.toFixed(2)],
+                                backgroundColor: 'rgba(16, 185, 129, 0.7)', // Emerald
+                                borderColor: 'rgba(16, 185, 129, 1)',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        scales: {
+                            x: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Gigabytes (GB)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `${context.dataset.label}: ${context.raw} GB`;
+                                    }
+                                }
+                            }
+                        },
+                        responsive: true,
+                        maintainAspectRatio: false
+                    }
+                });
+            }
+
+
+            // --- ACCURACY CHART ---
+            function updateAccuracyChart() {
+                const selectedDataset = datasetSelect.value;
+                const data = ACCURACY_DATA[selectedDataset];
+
+                accuracyChart.data.labels = data.labels;
+                accuracyChart.data.datasets[0].data = data.scores.map(s => s[0]);
+                accuracyChart.data.datasets[1].data = data.scores.map(s => s[1]);
+                accuracyChart.data.datasets[2].data = data.scores.map(s => s[2]);
+                
+                accuracyChart.update();
+            }
+
+            function initAccuracyChart() {
+                const ctx = document.getElementById('accuracyChart').getContext('2d');
+                const initialData = ACCURACY_DATA[datasetSelect.value];
+                
+                accuracyChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: initialData.labels,
+                        datasets: [
+                            {
+                                label: 'Base Model',
+                                data: initialData.scores.map(s => s[0]),
+                                backgroundColor: 'rgba(107, 114, 128, 0.5)', // Gray
+                                borderColor: 'rgba(107, 114, 128, 1)',
+                                borderWidth: 1,
+                                barPercentage: 0.6,
+                                categoryPercentage: 0.7
+                            },
+                            {
+                                label: 'LoRA Fine-tune',
+                                data: initialData.scores.map(s => s[1]),
+                                backgroundColor: 'rgba(79, 70, 229, 0.7)', // Indigo
+                                borderColor: 'rgba(79, 70, 229, 1)',
+                                borderWidth: 1,
+                                barPercentage: 0.6,
+                                categoryPercentage: 0.7
+                            },
+                            {
+                                label: 'QLoRA Fine-tune',
+                                data: initialData.scores.map(s => s[2]),
+                                backgroundColor: 'rgba(16, 185, 129, 0.7)', // Emerald
+                                borderColor: 'rgba(16, 185, 129, 1)',
+                                borderWidth: 1,
+                                barPercentage: 0.6,
+                                categoryPercentage: 0.7
+                            }
+                        ]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100,
+                                title: {
+                                    display: true,
+                                    text: 'Performance Score'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                             tooltip: {
+                                mode: 'index',
+                                intersect: false
+                            }
+                        },
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        animation: {
+                            duration: 500,
+                            easing: 'easeInOutQuart'
+                        }
+                    }
+                });
+            }
+
+            // --- COST ESTIMATOR ---
+            function updateCost() {
+                const epochs = parseFloat(epochsInput.value) || 0;
+                const gpuCost = parseFloat(gpuCostInput.value) || 0;
+                
+                const loraTime = epochs * COST_CONFIG.base_hours_per_epoch;
+                const qloraTime = epochs * (COST_CONFIG.base_hours_per_epoch / COST_CONFIG.qlora_speedup_factor);
+
+                const loraTotalCost = loraTime * gpuCost;
+                const qloraTotalCost = qloraTime * gpuCost;
+
+                loraCostEl.textContent = `$${loraTotalCost.toFixed(2)}`;
+                qloraCostEl.textContent = `$${qloraTotalCost.toFixed(2)}`;
+            }
+            
+            // --- MODAL HANDLING ---
+            function setupModals() {
+                showMathBtn.addEventListener('click', () => mathModal.classList.add('show'));
+                closeMathModal.addEventListener('click', () => mathModal.classList.remove('show'));
+                
+                showQuantBtn.addEventListener('click', () => quantModal.classList.add('show'));
+                closeQuantModal.addEventListener('click', () => quantModal.classList.remove('show'));
+
+                // Close modal on outside click
+                window.addEventListener('click', (event) => {
+                    if (event.target === mathModal) mathModal.classList.remove('show');
+                    if (event.target === quantModal) quantModal.classList.remove('show');
+                });
+            }
+
+            // --- INITIALIZATION ---
+            function init() {
+                // Charts
+                initVramChart();
+                initAccuracyChart();
+                
+                // Cost
+                updateCost();
+
+                // Modals
+                setupModals();
+
+                // Event Listeners
+                modelSizeSlider.addEventListener('input', updateVramChart);
+                datasetSelect.addEventListener('change', updateAccuracyChart);
+                epochsInput.addEventListener('input', updateCost);
+                gpuCostInput.addEventListener('input', updateCost);
+            }
+
+            init();
+        });
+    </script>
+</body>
+</html>
